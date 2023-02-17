@@ -1,0 +1,231 @@
+---
+title: "Comparación de modelos frente a la Predicción del precio de la Acción de Bancolombia."
+output: html_notebook
+---
+
+En este ejercicio se pretende mostrar que tan efectivo es un modelo de Redes Neuronales frente a otro de Bosque Aleatorio para realizar la predicción de una Serie Temporal como lo es el precio de la acción de Bancolombia.
+
+Iniciaremos definiendo algunos conceptos que son importantes frente a lo que se plantea para que pueda haber un grado mayor de entendimiento frente al objetivo que queremos alcanzar que es ver que tan conveniente es usar un modelo o el otro para realizar el desarrollo de un modelo que ya veremos se puede generalizar a la predicción del precio de otras acciones o índices bursatiles.
+
+### **¿Qué es Bancolombia?**
+Bancolombia es el banco más grande de Colombia en términos de activos y capitalización de mercado. Ofrece una amplia gama de servicios financieros, incluyendo banca personal, comercial, corporativa e inversión. También tiene presencia en otros países de América Latina.
+
+#### **¿Qué es un Modelo de Redes Neuronales?**
+
+Un modelo de redes neuronales es un tipo de modelo matemático y computacional que se inspira en la estructura y funcionamiento del cerebro humano para procesar información y tomar decisiones. Está compuesto por capas de neuronas artificiales que procesan entradas y producen salidas mediante el ajuste de pesos y sesgos. Los modelos de redes neuronales pueden ser utilizados para tareas de clasificación, regresión, reconocimiento de patrones y otras aplicaciones en inteligencia artificial. Son ampliamente utilizados en aplicaciones de predicción de series de tiempo, como en finanzas, clima y demanda de energía.
+
+#### **¿Qué es un Modelo de Bosque Produndo?**
+
+Un modelo de Bosque Profundo es un tipo de modelo de aprendizaje automático que utiliza múltiples árboles de decisión para predecir los valores futuros de una serie de tiempo basándose en los valores pasados. Estos modelos son capaces de manejar características complejas y no lineales en los datos, y son ampliamente utilizados en aplicaciones de predicción de series de tiempo.
+
+#### **GLORARIO**
+
+<li>Serie de tiempo: Una secuencia de observaciones registradas en momentos sucesivos en el tiempo, generalmente a intervalos uniformes, y que se utilizan para analizar y predecir patrones y tendencias a lo largo del tiempo.</li>
+
+
+<li>Regresión: Una técnica estadística para modelar la relación entre una variable dependiente y una o más variables independientes, y para predecir los valores de la variable dependiente a partir de los valores de las variables independientes.</li>
+
+
+<li>R Studio: Un entorno integrado de desarrollo (IDE) de software para el lenguaje de programación R, que se utiliza para análisis estadísticos y visualización de datos.</li>
+
+
+<li>Tendencia: Una dirección general en la que una serie de tiempo se mueve a lo largo del tiempo, que puede ser ascendente (positiva), descendente (negativa) o no tener tendencia (estacionaria).</li>
+
+
+<li>MAPE: Error porcentual absoluto medio, es una medida de la precisión de un modelo de predicción, calculado como el promedio de los errores porcentuales absolutos entre los valores reales y predichos.</li>
+
+
+<li>MAE: Error absoluto medio, es una medida de la precisión de un modelo de predicción, calculado como el promedio de los errores absolutos entre los valores reales y predichos.</li>
+
+
+<li>Acción bursátil: El intercambio de acciones en el mercado de valores, que implica la compra y venta de títulos de propiedad de una empresa con el fin de obtener ganancias de las fluctuaciones en los precios de las acciones a lo largo del tiempo.</li>
+
+
+### Empecemos.
+
+Una vez definidos estos conceptos que son importantes, iniciaremos con la construcción del modelo de Redes Neuronales y luego el de Bosque Profundo.
+
+
+
+#### Configurando nuestro entorno.
+
+Para realizar la construcción de los modelos se hace uso de la suite de RStudio para R y dentro de esta se requerirán algunas librerías especificas para que los modelos puedan ejecutarse correctamente
+```{r warning=FALSE}
+#Instalando librerias
+install.packages(c("quantmod", "lubridate", "dplyr", "tidyr", "caret", "neuralnet", "NeuralNetTools", "randomForest"))
+```
+Una vez instaladas las librerías, procedemos a invocar las que iremos necesitando para su uso
+```{r}
+#Invocar librerias
+library(quantmod)
+library(lubridate)
+library(dplyr)
+library(tidyr)
+library(caret)
+library(ggplot2)
+```
+
+#### Cargando los datos...
+
+Para que este modelo pueda auto-actualizarse día con día sin importar cuando sea consultado, se realizará la consulta de los datos directamente desde la web, a través de un método própio de R llamado getsymbols, capturando los datos desde [Yahoo Finance](https://es.finance.yahoo.com/).
+
+iniciamos creando una variable llamada `hoy` que contiene la fecha actual del día en el que se esté realizando la construcción del modelo o el reentrenamiento del mismo.
+```{r}
+hoy <- today()
+
+acciones <- getSymbols('CIB', from = '2012-01-01', to = hoy, src = 'yahoo',
+                       auto.assign = F)[,6]
+```
+La variable acciones es donde se almacena la información histórica a través de la función **getsymbols** de la librería *quantmod*, aclaremos que la acción de Bancolombia en Yahoo Finance está etiquetada como 'CIB' y estamos capturando datos desde la fecha: `'2012-01-01'` y especificamente el precio de cierre ajustado(Cierre ajus) que es la sexta columna.
+visualizando los datos que acabamos de traer tenemos lo siguiente:
+```{r}
+plot(acciones)
+```
+Convertimos los datos capturados a dataframe ya que inicialmente presentan un formato llamado `xts`
+
+```{r}
+acciones <- as.data.frame(acciones)
+head(acciones)
+```
+Vemos que el dataframe presenta la fecha como un índice y no como una columna, corregiremos esto y también le daremos un nombre más adecuado a la columna de precios de la acción.
+```{r}
+acciones$fecha <- rownames(acciones)
+rownames(acciones) <- NULL
+names(acciones) = c("Precio","Fecha")
+acciones$Fecha = as.Date(acciones$Fecha)
+head(acciones)
+```
+ahora debemos anexar al dataframe un número de filas adicionales que de momento estarán vacías pero en dónde se irán almacenando los valores nuevos capturados desde la página de Yahoo Finance y que contendrán tambien los valores predichos hacia el futuro, por lo que debemos tener en cuenta que estos nuevos datos deben tener el mismo formato de los valores que ya tenemos almacenados y teniendo en cuenta el tipo de objeto que estamos intentando predecir, en este caso acciones de la bolsa de valores, tienen cierto grado de incertidumbre o variabilidad por lo que no es recomendable pronosticar muchos datos hacia el futuro.
+En nuestro caso tenemos datos desde el año 2016 pronosticaremos 30 días.
+
+```{r}
+rango_fecha = (hoy + 1) : (hoy + 30)
+Precio = as.numeric(NA)
+rango_fecha = as.data.frame(cbind(Precio,rango_fecha))
+rango_fecha$Fecha = as.Date(rango_fecha$rango_fecha)
+rango_fecha$rango_fecha = NULL
+
+acciones <- rbind(acciones,rango_fecha)
+tail(acciones)
+```
+ahora nuestro dataframe acciones tiene 30 filas más correspondientes a las 30 predicciones futuras a partir de hoy (el día en el que se ejecute el modelo).
+
+nuestro modelo predice el valor de la acción como la variable dependiente, en función de la única variable independiente que tenemos que es la fecha. Buscando que nuestro modelo aprenda a evaluar el precio en función de más variables independientes para obtener un mejor desempeño separaremos la fecha en año, mes y día.
+```{r}
+acciones$Fecha_dup = acciones$Fecha
+acciones <- acciones %>% separate(Fecha, c('Año','Mes','Dia'))
+acciones$Año = as.numeric(acciones$Año)
+acciones$Mes = as.numeric(acciones$Mes)
+acciones$Dia = as.numeric(acciones$Dia)
+```
+ahora para continuar preparando el modelo necesitamos crear una semilla para particionar los datos de entrenamiento y prueba y que pueda ser reproducible este ejercicio y se tomen los mismos datos, también debemos escalar los datos ya que el modelo de Redes Neuronales sólo admite datos escalados, característica que pudiera ser una desventaja frente a otros modelos que no requieren este proceso lo que se traduce en menos tiempo de procesamiento al final.
+```{r}
+set.seed(1998)
+acciones.sc <- as.data.frame(cbind(acciones$Precio, acciones$Fecha_dup, scale(acciones[,c(2:4)])))
+names(acciones.sc)[1] = 'Precio'
+names(acciones.sc)[2] = 'Fecha'
+acciones.sc$Fecha = as.Date(acciones.sc$Fecha)
+
+set.seed(1998)
+train = createDataPartition(na.omit(subset(acciones, acciones$Fecha_dup < today()))$Precio,
+                            p = 0.7, list = F)
+test = rbind(acciones[-train,] , subset(acciones,acciones$Fecha_dup >= today()))
+test.sc = as.data.frame(cbind(test$Precio,test$Fecha_dup, scale(test[,c(2,3,4)])))
+names(test.sc)[1] = 'Precio'
+names(test.sc)[2] = 'Fecha'
+test.sc$Fecha = as.Date(test.sc$Fecha)
+```
+Ya hemos preparado todos los datos necesarios, ahora cargamos las librerías que nos ayudaran a entrenar el modelo en sí y que previamente hemos instalado.
+```{r}
+library(neuralnet)
+library(NeuralNetTools)
+```
+creamos el objeto que contiene el modelo `mod` y le pasamos los parámetros que necesita `formulas`recibe la columna a precedir que es Precio a partir del Año, Mes y Día usando la data de acciones escalada, usaremos una capa oculta de dos neuronas para realizar el entrenamiento.
+```{r}
+mod = neuralnet(formula = Precio ~ Año + Mes + Dia, data = acciones.sc[train,], hidden = 2,
+                threshold = 0.01, stepmax = 1e+08, rep = 1, linear.output = TRUE)
+plotnet(mod)
+```
+aqui vemos la estructura de la red neuronal donde están las capas del modelo entrenado.
+
+ahora haremos las predicciones y las pondremos en un mismo dataframe con los datos de entrenamiento para comparar y evaluar su desempeño
+```{r}
+pred <- compute(mod, test.sc)
+
+datos = cbind(pred$net.result, test.sc)
+```
+
+ahora usando el RMSE(Error Cuadrático Medio de la Raiz) que es una medida de la diferencia cuadrática promedio entre los valores que son estimados y los valores reales dentro de una raíz, y entre más bajo sea este resultado indica un mejor ajuste entre los datos predichos y los reales.
+
+```{r}
+error_abs = RMSE(datos$Precio,datos$`pred$net.result`,na.rm = TRUE)
+sprintf('Error Absoluto: %s', error_abs)
+error_por = error_abs /  datos[datos$Fecha == max(na.omit(datos)$Fecha),]$Precio * 100
+sprintf('Error Porcentual: %s', error_por)
+```
+Hablando en terminos absolutos podemos decir que en promedio hay una diferencia de $ 6.205 pesos entre los valores predichos y los valores reales y en términos porcentuales en promedio hay una diferencia del 22.85% entre los valores predichos y los valores reales.
+
+A modo de conclusiones preliminares se tiene que estos promedios de error absoluto y porcentual son bastante altos, y sumado al tiempo que ha tomado entrenar el modelo, deja ver inconpetencias de este modelo para poder ser usado para predecir este tipo de datos con regularidad.
+
+Veamos estos resultados gráficamente:
+
+```{r}
+ggplot() + 
+  geom_line(data = datos, aes(x = Fecha, y = Precio, color = "Datos Reales")) +
+  geom_line(data = datos, aes(x = Fecha, y = `pred$net.result`, color = "Datos Entrenados")) +
+  labs(title="MODELO DE REDES NEURONALES ENTRENADO VS DATOS REALES", x="AÑO", y="PRECIO") +
+  theme(legend.position = "top")+
+  scale_color_discrete(name = "Leyenda", labels = c("Datos Entrenados", "Datos Reales"))
+```
+
+Vemos aquí que los datos entrenados no reaccionan bien ante los cambios que tiene el precio real por ejemplo la caída del precio durante el auge de la pandemia por COVID19 no logra predecirla ni en un mínimo porcentaje, errores que no se ven justificados por el alto costo de tiempo de procesamiento que requiere entrenarlo.
+
+
+Ahora vamos a entrenar el modelo de RandomForest o Bosque aleatorio en un nuevo objeto `mod_rf` que lo contenga,hacemos el mismo procedimiento que con la red neuronal, le pasamos los parametros y le indicamos que la variable a predecir es el Precio a partir de las variables predictoras Año, Mes y Dia, con la data de acciones, que en este caso no requiere ser escalada para que sea admitida por el modelo.
+cargamos la libreria correspondiente 
+```{r}
+library(randomForest)
+mod_rf = randomForest(Precio ~ Año + Mes + Dia, data = acciones[train,],
+                      type = 'regression', ntree = 100)
+pred_rf = predict(mod_rf, test)
+datos_rf = cbind(pred_rf,test)
+```
+Una vez ejecutado el modelo que tomó poco menos de un segundo en terminar el entrenamiento debemos medir su desempeño para comparar con el modelo anterior.
+
+```{r}
+error_abs_rf = RMSE(datos_rf$Precio,datos_rf$pred_rf,na.rm = TRUE)
+sprintf('Error Absoluto: %s', error_abs_rf)
+
+error_por_rf = error_abs_rf /  datos_rf[datos_rf$Fecha_dup == max(na.omit(datos_rf)$Fecha_dup),]$Precio * 100
+sprintf('Error Porcentual: %s', error_por_rf)
+```
+vemos que se tiene cambios bastante notorios, practicamente los resultados mejoraron en la mitad del anterior para el error absoluto tenemos que varian en promedio de $ 3.060 pesos, los datos reales de los predichos y en terminos porcentuales, los datos varian en un 11.27% que todavia es alto pero menos que con el anterior modelo.
+
+
+```{r}
+ggplot() + 
+  geom_line(data = datos_rf, aes(x = Fecha_dup, y = Precio, color = "Datos Reales")) +
+  geom_line(data = datos_rf, aes(x = Fecha_dup, y = pred_rf, color = "Datos Entrenados")) +
+  labs(title="MODELO DE BDSQUE ALEATORIO VS DATOS REALES", x="AÑO", y="PRECIO") +
+  scale_color_discrete(name = "Leyenda", labels = c("Datos Entrenados", "Datos Reales"))+
+  theme(legend.position = "top")
+```
+A nivel gráfico se puede visualizar que este último modelo sigue las tendencias propuestas por los datos reales hacia arriba y hacia abajo e incluso intenta graficar la volatilidad exactamente pero con más suavidad que la original.
+
+#### Conclusiones
+
+Hemos cumplido el objetivo inicial propuesto que era ver cómo se desempeñaban estos dos modelos con los mísmos datos de entrenamiento y predicción y los resultados son bastante diferenciados, veamos una tabla con las principales diferencias entre los dos modelos:
+
+| Aspectos  | Redes Neuronales      | Bosque Aleatorio |
+|-----------|-----------------------|------------------|
+| Parametrización    | Requiere mayor parametrización antes de ejecutar el modelo| No requiere tantos parametros previos    |
+| Tiempo de entrenamiento   | Requiere bastantes recursos computacionales y tiempo para finalizar el entrenamiento del modelo    | Requiere menos recursos computacionales y de tiempo    |
+| Ajuste de los datos    | A pesar de toda la parametrización que requiere su ajuste al modelo es bastante pobre y no tiene en cuenta las tendencias de los datos y su volatilidad    | se ajusta mucho mejor y reproduce las volatilidades y tendencias del modelo    |
+
+En conclusión el modelo de Bosque Aleatorio ha sido superior frente al planteamiento de los datos que se tuvo, mejorando los errores de un modelo a otro aproximadamente en el 50%, sin embargo el modelo de Redes Neuronales sigue siendo un modelo muy poderoso para entrenamiento de modelos de Machine Learning, solo que en esta ocación fue muy superior otro, por lo que quedamos satisfechos con los resultados obtenidos.
+
+autor: Geiler David Prada Salas.
+
+
+
+
